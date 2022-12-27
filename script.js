@@ -1,342 +1,315 @@
-function MakeSquare(row, column) {
-return ((row + 4) << 4) | (column + 4);
-}
-
-function GenerateValidMoves(){
-var moveList = [];
-var am = GenerateAllMoves(whiteTurn);
-if(!g_inCheck)
-	for(var i = am.length - 1; i >= 0; i--){
-		var m = am[i];
-		MakeMove(m);
-		GenerateAllMoves(whiteTurn);
-		if(!g_inCheck)
-			moveList[moveList.length] = m;
-		UnmakeMove(m);
-	}
-return moveList;
-}
-
-function EmoToGmo(emo){
-var xmo = EmoToXmo(emo);
-return XmoToGmo(xmo);
-}
-
-function EmoToXmo(emo){
-var l='abcdefgh';
-var n='87654321';
-var a=emo.split('');
-var n1=l.indexOf(a[0]);
-var n2=n.indexOf(a[1]);
-var n3=l.indexOf(a[2]);
-var n4=n.indexOf(a[3]);
-var ns=(n2<<3) | n1;
-var nd=(n4<<3) | n3;
-return {s:ns,d:nd,p:emo.charAt(4)};
-}
-
-function GmoToXmo(gmo){
-var ma=(gmo & 0xFF);
-var mb=(gmo >> 8) & 0xFF;
-var max=(ma & 0xf)-4;
-var mbx=(mb & 0xf)-4;
-var may=(ma >> 4)-4;
-var mby=(mb >> 4)-4;
-ma=may*8+max;
-mb=mby*8+mbx;
-return {s:ma,d:mb,p:'q'};
-}
-
-function XmoToGmo(xmo){
-var max = xmo.s & 7;
-var mbx = xmo.d & 7;
-var may = xmo.s >> 3;
-var mby = xmo.d >> 3;
-var sa = MakeSquare(may, max);
-var sb = MakeSquare(mby, mbx);
-var move = sa | (sb << 8);
-if(xmo.p){
-	if(xmo.p=='q') move=move | moveflagPromoteQueen;
-	else if(xmo.p=='r') move=move | moveflagPromoteRook;
-	else if(xmo.p=='b') move=move | moveflagPromoteBishop;
-	else move=move | moveflagPromoteKnight;
-}
-var moves = GenerateValidMoves();
-for(var i = 0; i < moves.length; i++){
-	if((move & 0xFFFF)==(moves[i] & 0xFFFF))
-		if(moves[i] & moveflagPromotion){
-			if((move & 0xF0FFFF) == (moves[i] & 0xF0FFFF))
-				return moves[i];
-		}else return moves[i];
-}
-return null;
-}
-
-function cHistory(){
-this.fen = '';
-this.list = [];
-}
-
-cHistory.prototype.Add = function(m){
-this.list.push(m);
-}
-
-cHistory.prototype.Clear=function(){
-this.fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-this.list = [];
-}
-
-cHistory.prototype.StrMoves=function(){
-var s = '';
-for(var n = 0;n < this.list.length;n++)
-	s += ' ' + this.list[n];
-return s;
-}
-
-var cRapuci=function(){}
-
-cRapuci.prototype.GetInt=function(tokens,key,shift,def){
-for (var i=0; i < tokens.length; i++)
-	if (tokens[i] == key)
-		return parseInt(tokens[i + shift]);
-return def;
-}
-
-cRapuci.prototype.GetStr=function(tokens,key){
-for (var i=0; i < tokens.length; i++)
-	if (tokens[i] == key)
-		return tokens[i+1];
-return '';
-}
-
-cRapuci.prototype.GetStrToEnd=function(tokens,key,def){
-var val='';
-for (var i=0; i < tokens.length; i++)
-	if (tokens[i] == key){
-		for (var j=i+1; j < tokens.length; j++)
-			val += tokens[j] + ' ';
-		return val;
-	}
-return def;
-}
-
-function cEngine(){
-this.engine = null;	
-this.owner = null;
-this.name = '';
-this.author = '';
-this.file = '';	
-this.goparam = '';	
-}
-
-cEngine.prototype.DoMove = function(){
-$('#uciBody').empty();	
-this.engine.postMessage('position fen ' + History.fen + ' moves' + History.StrMoves());
-this.engine.postMessage('go ' + this.goparam);	
-}
-
-cEngine.prototype.Init = function(param){
-this.name = '';
-this.author = '';
-this.goparam = param;
-this.Stop();
-this.engine = new Worker(window.URL.createObjectURL(workerData));
-this.engine.owner = this;
-this.engine.onmessage = function(e){
-	var message = e.data;
-	message = message.trim();
-	message = message.replace(/\s+/g,' ');
-	var tokens  = message.split(' ');
-	if (tokens[0] == 'bestmove'){
-		Chess.DoEngineMove(tokens[1]);
-	}else if (tokens[0] == 'info'){
-		var s='';
-		var mate = Rapuci.GetStr(tokens,'score');
-		var score = Rapuci.GetInt(tokens,'score',2,false);
-		var depth = Rapuci.GetInt(tokens,'depth',1);
-		var seldepth = Rapuci.GetInt(tokens,'seldepth',1,0);
-		var nps = Rapuci.GetInt(tokens,'nps',1,false);
-		var pv = Rapuci.GetStrToEnd(tokens,'pv',false);
-		var sDepth = depth;
-		if(depth){
-			if(seldepth)sDepth += '/' + seldepth;
-			s += 'depth ' + sDepth + ' ';
-		}
-		if(nps){
-			var nls = nps.toLocaleString();
-			s += 'nps ' +nls + ' ';
-		}
-		if(pv)
-			s+='pv '+ pv;
-		if(score !== false){
-			if(score > 0)score='+' + score;
-			if(mate == 'mate')score += 'M';
-			$('#output').text(this.owner.name + ' score ' + score + ' ' + s);
-		}
-		if(pv){
-			this.pv = pv;
-			this.sDepth = sDepth;
-			$('#uciBody').prepend('<tr><td class="taright">'+score+'</td><td class="tacenter">' + sDepth + '</td><td>' + pv + '</td><tr>');
-		}
-	}else if (tokens[0] == 'id'){
-		var a = Rapuci.GetStrToEnd(tokens,'author');
-		var n = Rapuci.GetStrToEnd(tokens,'name');
-		if(a)this.owner.author = a;
-		if(n)this.owner.name = n;
-		$('#output').text(this.owner.name + ' ' + this.owner.author);
-	}
-}
-this.engine.postMessage('uci');
-this.engine.postMessage('ucinewgame');
-}
-
-cEngine.prototype.Stop = function(){
-if(this.engine)this.engine.terminate();
-this.engine = null;
-}
-
-function cChess(){
-this.fieldS = -1;
-}
-
-cChess.prototype.AfterAnimation=function(){
-this.Render();
-if(!whiteTurn)
-	Engine.DoMove();
-}
-
-cChess.prototype.Animate = function(isou,ides){
-$('.field').removeClass('hovered');
-$('#f'+this.fieldS).addClass('hovered');
-var fs = $('#f'+isou).position();
-var fd = $('#f'+ides).position();
-var delx = fd.left - fs.left;
-var dely = fd.top - fs.top;
-$('#p'+isou).animate({'left':delx,'top':dely},{
-	duration:'slow',
-	start:function(){$(this).css('z-index',200)},
-	complete:function(){
-		Chess.AfterAnimation();
-	}
-});
-}
-
-cChess.prototype.DoEngineMove=function(emo){
-var gmo = EmoToGmo(emo);
-if(!gmo)return false;
-this.DoMove(gmo);
-return true;
-}
-
-cChess.prototype.DoMove=function(gmo){
-History.Add(FormatMove(gmo));
-MakeMove(gmo);
-var xmo = GmoToXmo(gmo);	
-this.fieldS = xmo.d;
-this.Animate(xmo.s,xmo.d);
-}
-
-cChess.prototype.NewGame = function(){
-this.fieldS = -1;	
-InitializeFromFen();
-this.Render();
-History.Clear();
-var param = $('#inParam').val();
-Engine.Init(param);
-}
-
-cChess.prototype.Render = function(){
-this.RenderBoard();
-this.RenderPiece();
-}
-
-cChess.prototype.RenderBoard = function(){
-var hor = 'ABCDEFGH';
-var table = $('<table>');
-for(y1=0;y1<10;++y1){
-	var tr=$('<tr>');
-	var fy = this.rotate ?y1:9-y1;
-	for(x1 = 0; x1 < 10; ++x1){
-		var td = $('<td>');
-		var fx = this.rotate ? 9 - x1 : x1;
-		if(y1==0 || y1==9)
-			if(x1>0 && x1<9)$(td).text(hor.charAt(fx-1));
-		if(x1==0 || x1==9)
-			if(y1>0 && y1<9)$(td).text(fy);
-		if(y1>0 && y1<9 && x1>0 && x1<9){
-			$(td).addClass('field');
-			var f = ((8-fy)*8+(fx-1));
-			var z = this.rotate ? 8 - fy : fy;
-			$('<div>').addClass('boadiv').attr('id','d'+f).appendTo(td);
-			$(td).attr('id','f'+f);
-			$(td).data('number',f);
-			$(td).data('numberz',z);
-			var bgColor = (y1 ^ x1) & 1;
-			if (bgColor)
-				$(td).addClass('fieldb');
-			else
-				$(td).addClass('fieldw');
-		}else $(td).addClass('fieldn');
-		$(tr).append(td);
-	}
-	$(table).append(tr);
-}
-$('#board').empty().append(table);
-$('.field').droppable({hoverClass:'hovered'});
-$('.field').click(function(){
-	Chess.SetSelected($(this).data('number'));
-});
-$('#f'+this.fieldS).addClass('hovered');
-}
-
-cChess.prototype.RenderPiece = function(){
-var rn = ['','p','n','b','r','q','k'];
-for(var i = 0;i < 64;i++){
-	var x = i % 8;
-	var y = Math.floor(i / 8);
-	var piece = g_board[((y + 4) * 0x10) + x + 4];
-	var pr = piece & 0x7;
-	if(pr && pr < 7){
-		var pieceName = rn[pr];
-		pieceName += (piece & 0x8) ? 'b' : 'w';
-		var p = $('<div>').attr('id','p'+i).data('number',i).addClass('piece '+pieceName).appendTo('#d'+i);
-	}
-}	
-$('.piece').draggable({cursor:'pointer',containment: '#board',zIndex:300,
-	revert:function(socket){
-		return !Chess.SetSelected($(socket).data('number'));
-	},
-	start: function(){
-		Chess.fieldS = $(this).data('number');
-	}
-});
-$('.piece').click(function(){
-	Chess.SetSelected($(this).data('number'));
-});
-}
-
-cChess.prototype.SetSelected=function(i){
-var xmo = {s:this.fieldS,d:i,p:'q'};
-var gmo = XmoToGmo(xmo);
-if(gmo){
-	$('#p'+this.fieldS).data('number',i);
-	this.DoMove(gmo);
-	return true;
-}else{
-	$('.field').removeClass('hovered');
-	$('#f'+i).addClass('hovered');
-	this.fieldS = i;
-	return false;
-}
-}
-
-let workerData = new Blob([document.getElementById('myWorker').textContent],{
-    type:"text/javascript"
-});  
-let History = new cHistory();
-let Engine = new cEngine();
-let Rapuci = new cRapuci();
-let Chess = new cChess();
-$(document).ready(function(){  
-Chess.NewGame();
-});
+"use strict";
+var CoinGeckoApi;
+(function (CoinGeckoApi) {
+    CoinGeckoApi["AllCoins"] = "coins/markets?vs_currency=usd&page=1&per_page=30&sparkline=false";
+    CoinGeckoApi["Base"] = "https://api.coingecko.com/api/v3";
+})(CoinGeckoApi || (CoinGeckoApi = {}));
+var RequestStatus;
+(function (RequestStatus) {
+    RequestStatus["Error"] = "Error";
+    RequestStatus["Idle"] = "Idle";
+    RequestStatus["Loading"] = "Loading";
+    RequestStatus["Success"] = "Success";
+})(RequestStatus || (RequestStatus = {}));
+var Color;
+(function (Color) {
+    Color["Green"] = "76, 175, 80";
+    Color["Red"] = "198, 40, 40";
+})(Color || (Color = {}));
+const CryptoUtility = {
+    formatPercent: (value) => {
+        return (value / 100).toLocaleString("en-US", { style: "percent", minimumFractionDigits: 2 });
+    },
+    formatUSD: (value) => {
+        return value.toLocaleString("en-US", { style: "currency", currency: "USD" });
+    },
+    getByID: (id, cryptos) => {
+        const match = cryptos.find((crypto) => crypto.id === id);
+        return match || null;
+    },
+    map: (data) => {
+        return {
+            change: data.price_change_percentage_24h,
+            id: data.id,
+            image: data.image,
+            marketCap: CryptoUtility.formatUSD(data.market_cap),
+            name: data.name,
+            price: CryptoUtility.formatUSD(data.current_price),
+            rank: data.market_cap_rank,
+            supply: data.circulating_supply.toLocaleString(),
+            symbol: data.symbol,
+            volume: CryptoUtility.formatUSD(data.total_volume)
+        };
+    },
+    mapAll: (data) => {
+        return data.map((item) => CryptoUtility.map(item));
+    }
+};
+const ChartUtility = {
+    draw: (id, points, change) => {
+        const canvas = document.getElementById(id);
+        if (canvas !== null) {
+            const context = canvas.getContext("2d");
+            const { clientHeight: height, clientWidth: width } = context.canvas;
+            context.stroke();
+            return new Chart(context, {
+                type: "line",
+                data: {
+                    datasets: [Object.assign({ data: points.map((point) => point.price) }, ChartUtility.getDatasetOptions(change))],
+                    labels: points.map((point) => point.timestamp)
+                },
+                options: ChartUtility.getOptions(points)
+            });
+        }
+    },
+    getDatasetOptions: (change) => {
+        const color = change >= 0 ? Color.Green : Color.Red;
+        return {
+            backgroundColor: "rgba(" + color + ", 0.1)",
+            borderColor: "rgba(" + color + ", 0.5)",
+            fill: true,
+            tension: 0.2,
+            pointRadius: 0
+        };
+    },
+    getOptions: (points) => {
+        const min = Math.min.apply(Math, points.map((point) => point.price)), max = Math.max.apply(Math, points.map((point) => point.price));
+        return {
+            maintainAspectRatio: false,
+            responsive: true,
+            scales: {
+                x: {
+                    display: false,
+                    gridLines: {
+                        display: false
+                    }
+                },
+                y: {
+                    display: false,
+                    gridLines: {
+                        display: false
+                    },
+                    suggestedMin: min * 0.98,
+                    suggestedMax: max * 1.02
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                },
+                title: {
+                    display: false
+                }
+            }
+        };
+    },
+    getUrl: (id) => {
+        return `${CoinGeckoApi.Base}/coins/${id}/market_chart?vs_currency=usd&days=1`;
+    },
+    mapPoints: (data) => {
+        return data.prices.map((price) => ({
+            price: price[1],
+            timestamp: price[0]
+        }));
+    },
+    update: (chart, points, change) => {
+        chart.options = ChartUtility.getOptions(points);
+        const options = ChartUtility.getDatasetOptions(change);
+        chart.data.datasets[0].data = points.map((point) => point.price);
+        chart.data.datasets[0].backgroundColor = options.backgroundColor;
+        chart.data.datasets[0].borderColor = options.borderColor;
+        chart.data.datasets[0].pointRadius = options.pointRadius;
+        chart.data.labels = points.map((point) => point.timestamp);
+        chart.update();
+    }
+};
+/* ---------- Loading Component ---------- */
+const LoadingSpinner = () => {
+    return (React.createElement("div", { className: "loading-spinner-wrapper" },
+        React.createElement("div", { className: "loading-spinner" },
+            React.createElement("i", { className: "fa-regular fa-spinner-third" }))));
+};
+/* ---------- Crypto List Component ---------- */
+const CryptoListToggle = () => {
+    const { state, toggleList } = React.useContext(AppContext);
+    if (state.status === RequestStatus.Success && state.cryptos.length > 0) {
+        const classes = classNames("fa-regular", {
+            "fa-bars": !state.listToggled,
+            "fa-xmark": state.listToggled
+        });
+        return (React.createElement("button", { id: "crypto-list-toggle-button", onClick: () => toggleList(!state.listToggled) },
+            React.createElement("i", { className: classes })));
+    }
+    return null;
+};
+const CryptoListItem = (props) => {
+    const { state, selectCrypto } = React.useContext(AppContext);
+    const { crypto } = props;
+    const getClasses = () => {
+        const selected = state.selectedCrypto && state.selectedCrypto.id === crypto.id;
+        return classNames("crypto-list-item", {
+            selected
+        });
+    };
+    return (React.createElement("button", { type: "button", className: getClasses(), onClick: () => selectCrypto(crypto.id) },
+        React.createElement("div", { className: "crypto-list-item-background" },
+            React.createElement("h1", { className: "crypto-list-item-symbol" }, crypto.symbol),
+            React.createElement("img", { className: "crypto-list-item-background-image", src: crypto.image })),
+        React.createElement("div", { className: "crypto-list-item-content" },
+            React.createElement("h1", { className: "crypto-list-item-rank" }, crypto.rank),
+            React.createElement("img", { className: "crypto-list-item-image", src: crypto.image }),
+            React.createElement("div", { className: "crypto-list-item-details" },
+                React.createElement("h1", { className: "crypto-list-item-name" }, crypto.name),
+                React.createElement("h1", { className: "crypto-list-item-price" }, crypto.price)))));
+};
+const CryptoList = () => {
+    const { state } = React.useContext(AppContext);
+    if (state.status === RequestStatus.Success && state.cryptos.length > 0) {
+        const getItems = () => {
+            return state.cryptos.map((crypto) => (React.createElement(CryptoListItem, { key: crypto.id, crypto: crypto })));
+        };
+        return (React.createElement("div", { id: "crypto-list" }, getItems()));
+    }
+    return null;
+};
+const CryptoPriceChart = () => {
+    const { selectedCrypto: crypto } = React.useContext(AppContext).state;
+    const id = "crypto-price-chart";
+    const [state, setStateTo] = React.useState({
+        chart: null,
+        points: [],
+        status: RequestStatus.Loading
+    });
+    const setStatusTo = (status) => {
+        setStateTo(Object.assign(Object.assign({}, state), { status }));
+    };
+    const setChartTo = (chart) => {
+        setStateTo(Object.assign(Object.assign({}, state), { chart }));
+    };
+    React.useEffect(() => {
+        const fetch = async () => {
+            try {
+                setStatusTo(RequestStatus.Loading);
+                const res = await axios.get(ChartUtility.getUrl(crypto.id));
+                setStateTo(Object.assign(Object.assign({}, state), { points: ChartUtility.mapPoints(res.data), status: RequestStatus.Success }));
+            }
+            catch (err) {
+                console.error(err);
+                setStatusTo(RequestStatus.Error);
+            }
+        };
+        fetch();
+    }, [crypto]);
+    React.useEffect(() => {
+        if (state.chart === null && state.status === RequestStatus.Success) {
+            setChartTo(ChartUtility.draw(id, state.points, crypto.change));
+        }
+    }, [state.status]);
+    React.useEffect(() => {
+        if (state.chart !== null) {
+            const update = () => ChartUtility.update(state.chart, state.points, crypto.change);
+            update();
+        }
+    }, [state.chart, state.points]);
+    const getLoadingSpinner = () => {
+        if (state.status === RequestStatus.Loading) {
+            return (React.createElement("div", { id: "crypto-price-chart-loading-spinner" },
+                React.createElement(LoadingSpinner, null)));
+        }
+    };
+    return (React.createElement("div", { id: "crypto-price-chart-wrapper" },
+        React.createElement("canvas", { id: id }),
+        getLoadingSpinner()));
+};
+const CryptoField = (props) => {
+    return (React.createElement("div", { className: classNames("crypto-field", props.className) },
+        React.createElement("h1", { className: "crypto-field-value" }, props.value),
+        React.createElement("h1", { className: "crypto-field-label" }, props.label)));
+};
+const CryptoDetails = () => {
+    const { selectedCrypto } = React.useContext(AppContext).state;
+    const [state, setStateTo] = React.useState({
+        crypto: null,
+        transitioning: true
+    });
+    const setTransitioningTo = (transitioning) => {
+        setStateTo(Object.assign(Object.assign({}, state), { transitioning }));
+    };
+    const { crypto } = state;
+    React.useEffect(() => {
+        if (selectedCrypto !== null) {
+            setTransitioningTo(true);
+            const timeout = setTimeout(() => {
+                setStateTo({ crypto: selectedCrypto, transitioning: false });
+            }, 500);
+            return () => {
+                clearTimeout(timeout);
+            };
+        }
+    }, [selectedCrypto]);
+    if (crypto !== null) {
+        const sign = crypto.change >= 0 ? "positive" : "negative";
+        return (React.createElement("div", { id: "crypto-details", className: classNames(sign, { transitioning: state.transitioning }) },
+            React.createElement("div", { id: "crypto-details-content" },
+                React.createElement("div", { id: "crypto-fields" },
+                    React.createElement(CryptoField, { label: "Rank", value: crypto.rank }),
+                    React.createElement(CryptoField, { label: "Name", value: crypto.name }),
+                    React.createElement(CryptoField, { label: "Price", value: crypto.price }),
+                    React.createElement(CryptoField, { label: "Market Cap", value: crypto.marketCap }),
+                    React.createElement(CryptoField, { label: "24H Volume", value: crypto.volume }),
+                    React.createElement(CryptoField, { label: "Circulating Supply", value: crypto.supply }),
+                    React.createElement(CryptoField, { className: sign, label: "24H Change", value: CryptoUtility.formatPercent(crypto.change) })),
+                React.createElement(CryptoPriceChart, null),
+                React.createElement("h1", { id: "crypto-details-symbol" }, crypto.symbol))));
+    }
+    return null;
+};
+const AppContext = React.createContext(null);
+const App = () => {
+    const [state, setStateTo] = React.useState({
+        cryptos: [],
+        listToggled: true,
+        selectedCrypto: null,
+        status: RequestStatus.Loading
+    });
+    const setStatusTo = (status) => {
+        setStateTo(Object.assign(Object.assign({}, state), { status }));
+    };
+    const selectCrypto = (id) => {
+        setStateTo(Object.assign(Object.assign({}, state), { listToggled: window.innerWidth > 800, selectedCrypto: CryptoUtility.getByID(id, state.cryptos) }));
+    };
+    const toggleList = (listToggled) => {
+        setStateTo(Object.assign(Object.assign({}, state), { listToggled }));
+    };
+    React.useEffect(() => {
+        const fetch = async () => {
+            try {
+                setStatusTo(RequestStatus.Loading);
+                const res = await axios.get(`${CoinGeckoApi.Base}/${CoinGeckoApi.AllCoins}`);
+                setStateTo(Object.assign(Object.assign({}, state), { cryptos: CryptoUtility.mapAll(res.data), status: RequestStatus.Success }));
+            }
+            catch (err) {
+                console.error(err);
+                setStatusTo(RequestStatus.Error);
+            }
+        };
+        fetch();
+    }, []);
+    React.useEffect(() => {
+        if (state.status === RequestStatus.Success && state.cryptos.length > 0) {
+            selectCrypto(state.cryptos[0].id);
+        }
+    }, [state.status]);
+    const getLoadingSpinner = () => {
+        if (state.status === RequestStatus.Loading) {
+            return (React.createElement(LoadingSpinner, null));
+        }
+    };
+    return (React.createElement(AppContext.Provider, { value: { state, selectCrypto, setStateTo, toggleList } },
+        React.createElement("div", { id: "app", className: classNames({ "list-toggled": state.listToggled }) },
+            React.createElement(CryptoList, null),
+            React.createElement(CryptoDetails, null),
+            React.createElement(CryptoListToggle, null),
+            getLoadingSpinner())));
+};
+ReactDOM.render(React.createElement(App, null), document.getElementById("root"));
